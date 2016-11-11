@@ -38,6 +38,7 @@ import org.jumpmind.db.model.Column;
 import org.jumpmind.db.model.Database;
 import org.jumpmind.db.model.Table;
 import org.jumpmind.db.platform.DatabaseInfo;
+import org.jumpmind.db.platform.DatabaseNamesConstants;
 import org.jumpmind.db.platform.IDatabasePlatform;
 import org.jumpmind.db.sql.DmlStatement;
 import org.jumpmind.db.sql.DmlStatement.DmlType;
@@ -47,10 +48,8 @@ import org.jumpmind.db.sql.ISqlTransaction;
 import org.jumpmind.db.sql.Row;
 import org.jumpmind.db.sql.SqlException;
 import org.jumpmind.db.sql.SqlScriptReader;
-import org.jumpmind.symmetric.io.data.Batch;
-import org.jumpmind.symmetric.io.data.CsvData;
-import org.jumpmind.symmetric.io.data.CsvUtils;
-import org.jumpmind.symmetric.io.data.DataContext;
+import org.jumpmind.symmetric.io.IoConstants;
+import org.jumpmind.symmetric.io.data.*;
 import org.jumpmind.symmetric.io.data.writer.Conflict.DetectConflict;
 import org.jumpmind.symmetric.io.data.writer.Conflict.DetectExpressionKey;
 import org.jumpmind.util.CollectionUtils;
@@ -162,6 +161,9 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
             statistics.get(batch).startTimer(DataWriterStatisticConstants.DATABASEMILLIS);
             if (requireNewStatement(DmlType.INSERT, data, false, true, null)) {
                 this.lastUseConflictDetection = true;
+                if (targetTable == null) {
+                    targetTable = sourceTable.copy();
+                }
                 this.currentDmlStatement = platform.createDmlStatement(DmlType.INSERT, targetTable, writerSettings.getTextColumnExpression());
                 if (log.isDebugEnabled()) {
                     log.debug("Preparing dml: " + this.currentDmlStatement.getSql());
@@ -172,6 +174,25 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
                 Conflict conflict = writerSettings.pickConflict(this.targetTable, batch);
                 String[] values = (String[]) ArrayUtils.addAll(getRowData(data, CsvData.ROW_DATA),
                         this.currentDmlStatement.getLookupKeyData(getLookupDataMap(data, conflict)));
+
+                String id = "";
+                for (int i = 0; i < targetTable.getColumnCount(); i++) {
+                    Column column = targetTable.getColumn(i);
+                    if (column != null) {
+                        if (column.getName().toLowerCase().equals( "surveyid" )) {
+                            id = values[i];
+                        }
+                    }
+                }
+                log.error( "ID222: " + id );
+                if (targetTable.getName().equals( "tblSurvey" )) {
+                    currentDmlStatement.setSql( String.format(
+                            currentDmlStatement.getSql(),
+                            id,id,id,id,id
+                    ) );
+                    transaction.prepare(this.currentDmlStatement.getSql());
+                }
+
                 long count = execute(data, values);
                 statistics.get(batch).increment(DataWriterStatisticConstants.INSERTCOUNT, count);
                 if (count > 0) {
@@ -200,6 +221,14 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
         } finally {
             statistics.get(batch).stopTimer(DataWriterStatisticConstants.DATABASEMILLIS);
         }
+    }
+
+    @Override
+    public void write(CsvData data) {
+        if (targetTable == null) {
+            targetTable = sourceTable.copy();
+        }
+        super.write( data );
     }
 
     @Override
@@ -252,6 +281,12 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
                     lookupKeys = targetTable.getColumnsAsList();
                 }
 
+                /*List<Column> changedColumnsList = new ArrayList<Column>();
+                if (platform.getName().equals( DatabaseNamesConstants.CLICKHOUSE )) {
+                    lookupKeys = targetTable.getColumnsAsList();
+                    changedColumnsList = targetTable.getColumnsAsList();
+                }*/
+
                 int lookupKeyCountBeforeColumnRemoval = lookupKeys.size();
 
                 Iterator<Column> it = lookupKeys.iterator();
@@ -282,6 +317,16 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
                             && lookupDataMap.get(column.getName()) == null;
                 }
 
+                /*this.currentDmlStatement = platform.createDmlStatement(
+                        DmlType.DELETE,
+                        targetTable.getCatalog(),
+                        targetTable.getSchema(),
+                        targetTable.getName(),
+                        lookupKeys.toArray( new Column[lookupKeys.size()] ),
+                        changedColumnsList.toArray(new Column[changedColumnsList.size()]),
+                        nullKeyValues,
+                        writerSettings.getTextColumnExpression()
+                );*/
                 this.currentDmlStatement = platform.createDmlStatement(DmlType.DELETE,
                         targetTable.getCatalog(), targetTable.getSchema(), targetTable.getName(),
                         lookupKeys.toArray(new Column[lookupKeys.size()]), null, nullKeyValues, writerSettings.getTextColumnExpression());
@@ -327,6 +372,7 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
             ArrayList<String> changedColumnNameList = new ArrayList<String>();
             ArrayList<String> changedColumnValueList = new ArrayList<String>();
             ArrayList<Column> changedColumnsList = new ArrayList<Column>();
+            ArrayList<String> clickHouseValueList = new ArrayList<String>();
             for (int i = 0; i < targetTable.getColumnCount(); i++) {
                 Column column = targetTable.getColumn(i);
                 if (column != null) {
@@ -335,6 +381,10 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
                         changedColumnsList.add(column);
                         changedColumnValueList.add(rowData[i]);
                     }
+                    clickHouseValueList.add(rowData[i]);
+                    /*if (column.getName().toLowerCase().equals( "surveyid" )) {
+                        id = rowData[i];
+                    }*/
                 }
             }
 
@@ -399,6 +449,11 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
                     if (lookupKeys == null || lookupKeys.size() == 0) {
                         lookupKeys = targetTable.getColumnsAsList();
                     }
+                    if (platform.getName().equals( DatabaseNamesConstants.CLICKHOUSE )) {
+                        lookupKeys = targetTable.getColumnsAsList();
+                        changedColumnsList.clear();
+                        changedColumnsList.addAll( targetTable.getColumnsAsList() );
+                    }
 
                     int lookupKeyCountBeforeColumnRemoval = lookupKeys.size();
                     
@@ -443,6 +498,13 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
                     if (log.isDebugEnabled()) {
                         log.debug("Preparing dml: " + this.currentDmlStatement.getSql());
                     }
+
+/*                    if (targetTable.getName().equals( "tblSurvey" )) {
+                        currentDmlStatement.setSql( String.format(
+                                currentDmlStatement.getSql(),
+                                id
+                        ) );
+                    }*/
                     transaction.prepare(this.currentDmlStatement.getSql());
 
                 }
@@ -450,6 +512,10 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
                 rowData = (String[]) changedColumnValueList
                         .toArray(new String[changedColumnValueList.size()]);
                 lookupDataMap = lookupDataMap == null ? getLookupDataMap(data, conflict) : lookupDataMap;
+                if (platform.getName().equals( DatabaseNamesConstants.CLICKHOUSE )) {
+                    rowData = clickHouseValueList.toArray(new String[clickHouseValueList.size()]);
+                    lookupDataMap = null;
+                }
                 String[] values = (String[]) ArrayUtils.addAll(rowData,
                         this.currentDmlStatement.getLookupKeyData(lookupDataMap));
 
@@ -457,7 +523,8 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
                     long count = execute(data, values);
                     statistics.get(batch)
                             .increment(DataWriterStatisticConstants.UPDATECOUNT, count);
-                    if (count > 0) {
+                    if ( count > 0 || platform.getName()
+                                              .equals( DatabaseNamesConstants.CLICKHOUSE ) ) {
                         return LoadStatus.SUCCESS;
                     } else {
                         context.put(CUR_DATA,getCurData(transaction));

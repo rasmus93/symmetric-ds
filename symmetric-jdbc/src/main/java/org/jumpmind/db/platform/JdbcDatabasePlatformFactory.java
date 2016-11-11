@@ -33,6 +33,7 @@ import javax.sql.DataSource;
 import org.apache.commons.lang.StringUtils;
 import org.h2.util.JdbcUtils;
 import org.jumpmind.db.platform.ase.AseDatabasePlatform;
+import org.jumpmind.db.platform.clickhouse.ClickHouseDatabasePlatform;
 import org.jumpmind.db.platform.db2.Db2As400DatabasePlatform;
 import org.jumpmind.db.platform.db2.Db2DatabasePlatform;
 import org.jumpmind.db.platform.db2.Db2zOsDatabasePlatform;
@@ -111,6 +112,7 @@ public class JdbcDatabasePlatformFactory {
         addPlatform(platforms, "SQLite", SqliteDatabasePlatform.class);
         addPlatform(platforms, DatabaseNamesConstants.REDSHIFT, RedshiftDatabasePlatform.class);
         addPlatform(platforms, DatabaseNamesConstants.VOLTDB, VoltDbDatabasePlatform.class);
+        addPlatform(platforms, DatabaseNamesConstants.CLICKHOUSE, ClickHouseDatabasePlatform.class);
 
         jdbcSubProtocolToPlatform.put(Db2DatabasePlatform.JDBC_SUBPROTOCOL, Db2DatabasePlatform.class);
         jdbcSubProtocolToPlatform.put(DerbyDatabasePlatform.JDBC_SUBPROTOCOL, DerbyDatabasePlatform.class);

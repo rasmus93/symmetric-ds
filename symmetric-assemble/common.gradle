@@ -83,8 +83,8 @@ subprojects { subproject ->
     configurations.provided.transitive = true
     configurations.optional.transitive = false
 
-    sourceCompatibility=1.6
-    targetCompatibility=1.6
+    sourceCompatibility=1.8
+    targetCompatibility=1.8
 
     uploadArchives {
         repositories.mavenDeployer {
@@ -172,6 +172,7 @@ subprojects { subproject ->
         animalSnifferVersion = '1.10'
         jnaVersion = '4.1.0'
         jettyVersion = '9.2.18.v20160721'
+	    clickHouseVersion = '0.1.13'
         
         env = System.getenv()
     }
@@ -182,6 +183,7 @@ subprojects { subproject ->
         compile "org.slf4j:jcl-over-slf4j:$slf4jVersion"
         compile "org.slf4j:slf4j-log4j12:$slf4jVersion"
         compile "log4j:log4j:$log4jVersion"
+        compile "com.github.jsqlparser:jsqlparser:0.9.6"
         
         provided "org.apache.derby:derby:$derbyVersion"
         provided "org.apache.derby:derbytools:$derbyVersion"
@@ -191,6 +193,7 @@ subprojects { subproject ->
         provided "jdbc:ojdbc:11.2.0.3"
         provided "net.sourceforge.jtds:jtds:$jtdsVersion"
         provided "org.voltdb:voltdbclient:$voltDbVersion"
+        provided "ru.yandex.clickhouse:clickhouse-jdbc:$clickHouseVersion"
         provided "org.hsqldb:hsqldb:$hsqldbVersion:jdk5"
         provided "com.h2database:h2:$h2Version"
         provided "org.xerial:sqlite-jdbc:$sqliteVersion"

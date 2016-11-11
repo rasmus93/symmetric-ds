@@ -35,6 +35,7 @@ import org.apache.commons.lang.StringUtils;
 import org.jumpmind.db.model.Column;
 import org.jumpmind.db.model.Database;
 import org.jumpmind.db.model.Table;
+import org.jumpmind.db.platform.DatabaseNamesConstants;
 import org.jumpmind.db.platform.IAlterDatabaseInterceptor;
 import org.jumpmind.db.platform.IDatabasePlatform;
 import org.jumpmind.db.platform.IDdlBuilder;
@@ -46,10 +47,12 @@ import org.jumpmind.db.sql.SqlException;
 import org.jumpmind.db.sql.SqlScript;
 import org.jumpmind.db.util.BinaryEncoding;
 import org.jumpmind.exception.IoException;
+import org.jumpmind.symmetric.ISymmetricEngine;
 import org.jumpmind.symmetric.Version;
 import org.jumpmind.symmetric.common.Constants;
 import org.jumpmind.symmetric.common.ParameterConstants;
 import org.jumpmind.symmetric.ext.IDatabaseUpgradeListener;
+import org.jumpmind.symmetric.ext.ISymmetricEngineAware;
 import org.jumpmind.symmetric.io.data.DataEventType;
 import org.jumpmind.symmetric.model.Channel;
 import org.jumpmind.symmetric.model.Node;
@@ -67,9 +70,11 @@ import org.slf4j.LoggerFactory;
 /*
  * The abstract class for database dialects.
  */
-abstract public class AbstractSymmetricDialect implements ISymmetricDialect {
+abstract public class AbstractSymmetricDialect implements ISymmetricDialect, ISymmetricEngineAware {
 
     protected final Logger log = LoggerFactory.getLogger(getClass());
+
+    protected ISymmetricEngine engine;
 
     public static final int MAX_SYMMETRIC_SUPPORTED_TRIGGER_SIZE = 50;
 
@@ -124,6 +129,10 @@ abstract public class AbstractSymmetricDialect implements ISymmetricDialect {
         this.driverName = sqlTemplate.getDriverName();
         this.driverVersion = sqlTemplate.getDriverVersion();
                 
+    }
+
+    public void setSymmetricEngine(ISymmetricEngine engine) {
+        this.engine = engine;
     }
 
     public boolean requiresAutoCommitFalseToSetFetchSize() {
