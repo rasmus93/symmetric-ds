@@ -21,6 +21,7 @@ package org.jumpmind.db.alter;
 
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 
@@ -31,6 +32,7 @@ import org.jumpmind.db.model.ForeignKey;
 import org.jumpmind.db.model.IIndex;
 import org.jumpmind.db.model.Table;
 import org.jumpmind.db.platform.DatabaseInfo;
+import org.jumpmind.db.platform.DatabaseNamesConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -244,47 +246,57 @@ public class ModelComparator {
         Column[] sourcePK = sourceTable.getPrimaryKeyColumns();
         Column[] targetPK = targetTable.getPrimaryKeyColumns();
 
-        if ((sourcePK.length == 0) && (targetPK.length > 0)) {
-            if (log.isDebugEnabled()) {
-                log.debug("A primary key needs to be added to the table " + sourceTable.getName());
-            }
-            // we have to use the target table here because the primary key
-            // might
-            // reference a new column
-            changes.add(new AddPrimaryKeyChange(targetTable, targetPK));
-        } else if ((targetPK.length == 0) && (sourcePK.length > 0)) {
-            if (log.isDebugEnabled()) {
-                log.debug("The primary key needs to be removed from the table "
-                        + sourceTable.getName());
-            }
-            changes.add(new RemovePrimaryKeyChange(sourceTable, sourcePK));
-        } else if ((sourcePK.length > 0) && (targetPK.length > 0)) {
-            boolean changePK = false;
+        if (!databaseName.equals( DatabaseNamesConstants.CLICKHOUSE )) {
+            if ( ( sourcePK.length == 0 ) && ( targetPK.length > 0 ) ) {
+                if ( log.isDebugEnabled() ) {
+                    log.debug( "A primary key needs to be added to the table " + sourceTable.getName() );
+                }
+                // we have to use the target table here because the primary key
+                // might
+                // reference a new column
+                changes.add( new AddPrimaryKeyChange( targetTable, targetPK ) );
+            } else if ( ( targetPK.length == 0 ) && ( sourcePK.length > 0 ) ) {
+                if ( log.isDebugEnabled() ) {
+                    log.debug( "The primary key needs to be removed from the table "
+                                       + sourceTable.getName() );
+                }
+                changes.add( new RemovePrimaryKeyChange( sourceTable, sourcePK ) );
+            } else if ( ( sourcePK.length > 0 ) && ( targetPK.length > 0 ) ) {
+                boolean changePK = false;
 
-            if (sourcePK.length != targetPK.length) {
-                changePK = true;
-            } else {
-                for (int pkColumnIdx = 0; (pkColumnIdx < sourcePK.length) && !changePK; pkColumnIdx++) {
-                    if ((caseSensitive && !sourcePK[pkColumnIdx].getName().equals(
-                            targetPK[pkColumnIdx].getName()))
-                            || (!caseSensitive && !sourcePK[pkColumnIdx].getName()
-                                    .equalsIgnoreCase(targetPK[pkColumnIdx].getName()))) {
-                        changePK = true;
+                if ( sourcePK.length != targetPK.length ) {
+                    changePK = true;
+                } else {
+                    for ( int pkColumnIdx = 0; ( pkColumnIdx < sourcePK.length ) && !changePK; pkColumnIdx++ ) {
+                        if ( ( caseSensitive && !sourcePK[pkColumnIdx].getName().equals(
+                                targetPK[pkColumnIdx].getName() ) )
+                                || ( !caseSensitive && !sourcePK[pkColumnIdx].getName()
+                                                                             .equalsIgnoreCase(
+                                                                                     targetPK[pkColumnIdx]
+                                                                                             .getName() ) ) ) {
+                            changePK = true;
+                        }
                     }
                 }
-            }
-            if (changePK) {
-                if (log.isDebugEnabled()) {
-                    log.debug("The primary key of table " + sourceTable.getName()
-                            + " needs to be changed");
+                if ( changePK ) {
+                    if ( log.isDebugEnabled() ) {
+                        log.debug( "The primary key of table " + sourceTable.getName()
+                                           + " needs to be changed" );
+                    }
+                    changes.add( new PrimaryKeyChange( sourceTable, sourcePK, targetPK ) );
                 }
-                changes.add(new PrimaryKeyChange(sourceTable, sourcePK, targetPK));
             }
         }
 
         for (int columnIdx = 0; columnIdx < sourceTable.getColumnCount(); columnIdx++) {
             Column sourceColumn = sourceTable.getColumn(columnIdx);
             Column targetColumn = targetTable.findColumn(sourceColumn.getName(), caseSensitive);
+
+            String columnName = sourceColumn.getName();
+            if ( databaseName.equals( DatabaseNamesConstants.CLICKHOUSE ) &&
+                    ( columnName.equals( "deleted" ) || ( columnName.equals( "partition_date" ) ) ) ) {
+                continue;
+            }
 
             if (targetColumn == null) {
                 if (log.isDebugEnabled()) {
@@ -343,10 +355,14 @@ public class ModelComparator {
         if (!compatible && targetColumn.getMappedTypeCode() != sourceColumn.getMappedTypeCode()
                 && platformInfo.getTargetJdbcType(targetColumn.getMappedTypeCode()) != sourceColumn
                         .getMappedTypeCode()) {
-            log.debug(
+            log.error(
                     "The {} column on the {} table changed type codes from {} to {} ",
                     new Object[] { sourceColumn.getName(), sourceTable.getName(),
                             sourceColumn.getMappedTypeCode(), targetColumn.getMappedTypeCode() });
+            log.error(
+                    "The {} column on the {} table changed type codes from {} to {} ",
+                    new Object[] { sourceColumn.getName(), sourceTable.getName(),
+                                   sourceColumn.getJdbcTypeName(), targetColumn.getJdbcTypeName() });
             changes.add(new ColumnDataTypeChange(sourceTable, sourceColumn, targetColumn
                     .getMappedTypeCode()));
         }
@@ -385,10 +401,11 @@ public class ModelComparator {
         Object sourceDefaultValue = sourceColumn.getParsedDefaultValue();
         Object targetDefaultValue = targetColumn.getParsedDefaultValue();
 
-        if ((sourceDefaultValue == null && targetDefaultValue != null)
+        if (!databaseName.equals( DatabaseNamesConstants.CLICKHOUSE ) &&
+                ((sourceDefaultValue == null && targetDefaultValue != null)
                 || (sourceDefaultValue != null && targetDefaultValue == null)
                 || (sourceDefaultValue != null && targetDefaultValue != null && !sourceDefaultValue
-                        .toString().equals(targetDefaultValue.toString()))) {
+                        .toString().equals(targetDefaultValue.toString())))) {
             log.debug(
                     "The {} column on the {} table changed default value from {} to {} ",
                     new Object[] { sourceColumn.getName(), sourceTable.getName(),
@@ -397,7 +414,8 @@ public class ModelComparator {
                     .getDefaultValue()));
         }
 
-        if (sourceColumn.isRequired() != targetColumn.isRequired()) {
+        if (!databaseName.equals( DatabaseNamesConstants.CLICKHOUSE ) &&
+                sourceColumn.isRequired() != targetColumn.isRequired()) {
             log.debug(
                     "The {} column on the {} table changed required status from {} to {}",
                     new Object[] { sourceColumn.getName(), sourceTable.getName(),

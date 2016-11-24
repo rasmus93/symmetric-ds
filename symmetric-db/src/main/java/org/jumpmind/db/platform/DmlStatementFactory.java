@@ -22,6 +22,7 @@ package org.jumpmind.db.platform;
 
 import org.jumpmind.db.model.Column;
 import org.jumpmind.db.model.Table;
+import org.jumpmind.db.platform.clickhouse.ClickHouseDmlStatement;
 import org.jumpmind.db.platform.db2.Db2zOsDmlStatement;
 import org.jumpmind.db.platform.mssql.MsSqlDmlStatement;
 import org.jumpmind.db.platform.mysql.MySqlDmlStatement;
@@ -94,6 +95,10 @@ final public class DmlStatementFactory {
             return new MsSqlDmlStatement(dmlType, catalogName, schemaName, tableName, keys, columns,
                     nullKeyValues, ddlBuilder.getDatabaseInfo(),
                     ddlBuilder.isDelimitedIdentifierModeOn(), textColumnExpression);
+        } else if (DatabaseNamesConstants.CLICKHOUSE.equals(databaseName)) {
+            return new ClickHouseDmlStatement( dmlType, catalogName, schemaName, tableName, keys, columns,
+                                               nullKeyValues, ddlBuilder.getDatabaseInfo(),
+                                               ddlBuilder.isDelimitedIdentifierModeOn(), textColumnExpression);
         } else {
             return new DmlStatement(dmlType, catalogName, schemaName, tableName, keys, columns,
                     nullKeyValues, ddlBuilder.getDatabaseInfo(),

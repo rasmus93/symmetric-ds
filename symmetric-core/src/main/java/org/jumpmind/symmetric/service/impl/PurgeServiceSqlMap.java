@@ -22,6 +22,7 @@ package org.jumpmind.symmetric.service.impl;
 
 import java.util.Map;
 
+import org.jumpmind.db.platform.DatabaseNamesConstants;
 import org.jumpmind.db.platform.IDatabasePlatform;
 
 public class PurgeServiceSqlMap extends AbstractSqlMap {
@@ -53,9 +54,6 @@ public class PurgeServiceSqlMap extends AbstractSqlMap {
 "delete from $(data_event) where batch_id not in (select batch_id from               " + 
 "  $(outgoing_batch) where batch_id between ? and ? and status != ?)                 " + 
 "  and batch_id between ? and ?                                                      " );
-
-        putSql("selectDataRangeSql" ,
-"select min(data_id) as min_id, max(data_id) as max_id from $(data) where data_id < (select max(data_id) from $(data))   " );
 
         putSql("updateStrandedBatches" ,
 "update $(outgoing_batch) set status=? where node_id not                   " + 
@@ -104,8 +102,23 @@ public class PurgeServiceSqlMap extends AbstractSqlMap {
         putSql("purgeNodeHostStatsSql", "delete from $(node_host_stats) where start_time < ?");
                 
         putSql("purgeNodeHostJobStatsSql", "delete from $(node_host_job_stats) where start_time < ?");
-        
-        putSql("selectIncomingErrorsBatchIdsSql", "select distinct e.batch_id as batch_id from sym_incoming_error e LEFT OUTER JOIN sym_incoming_batch i ON e.batch_id = i.batch_id where i.batch_id IS NULL");
+
+        if (platform.getName().equals( DatabaseNamesConstants.CLICKHOUSE )) {
+            putSql(
+                    "selectIncomingErrorsBatchIdsSql",
+                    "select distinct e.batch_id as batch_id from sym_incoming_error e left outer join sym_incoming_batch i ON e.batch_id = i.batch_id where i.batch_id = 0"
+            );
+            putSql("selectDataRangeSql" ,
+                   "select min(data_id) as min_id, max(data_id) as max_id from $(data) where data_id" +
+                           " < (select sum(max_value) from (select max(data_id) as max_value from $(data) union all select toInt64(0)))");
+        } else {
+            putSql(
+                    "selectIncomingErrorsBatchIdsSql",
+                    "select distinct e.batch_id as batch_id from sym_incoming_error e LEFT OUTER JOIN sym_incoming_batch i ON e.batch_id = i.batch_id where i.batch_id IS NULL"
+            );
+            putSql("selectDataRangeSql" ,
+                   "select min(data_id) as min_id, max(data_id) as max_id from $(data) where data_id < (select max(data_id) from $(data))   " );
+        }
         
         putSql("deleteIncomingErrorsBatchIdsSql", "delete from sym_incoming_error where batch_id IN (?)");
         

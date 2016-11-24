@@ -355,6 +355,10 @@ public class DmlStatement {
         return sql;
     }
 
+    public void setSql( String sql ) {
+        this.sql = sql;
+    }
+
     public DmlType getDmlType() {
         return dmlType;
     }

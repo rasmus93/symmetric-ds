@@ -22,6 +22,7 @@ package org.jumpmind.symmetric.db;
 
 import org.jumpmind.db.platform.IDatabasePlatform;
 import org.jumpmind.db.platform.ase.AseDatabasePlatform;
+import org.jumpmind.db.platform.clickhouse.ClickHouseDatabasePlatform;
 import org.jumpmind.db.platform.db2.Db2As400DatabasePlatform;
 import org.jumpmind.db.platform.db2.Db2DatabasePlatform;
 import org.jumpmind.db.platform.db2.Db2zOsDatabasePlatform;
@@ -45,6 +46,7 @@ import org.jumpmind.db.platform.sqlanywhere.SqlAnywhereDatabasePlatform;
 import org.jumpmind.db.platform.sqlite.SqliteDatabasePlatform;
 import org.jumpmind.db.platform.voltdb.VoltDbDatabasePlatform;
 import org.jumpmind.symmetric.db.ase.AseSymmetricDialect;
+import org.jumpmind.symmetric.db.clickhouse.ClickHouseSymmetricDialect;
 import org.jumpmind.symmetric.db.db2.Db2As400SymmetricDialect;
 import org.jumpmind.symmetric.db.db2.Db2SymmetricDialect;
 import org.jumpmind.symmetric.db.db2.Db2v9SymmetricDialect;
@@ -155,6 +157,8 @@ public class JdbcSymmetricDialectFactory {
             dialect = new SqliteJdbcSymmetricDialect(parameterService, platform);
         } else if (platform instanceof VoltDbDatabasePlatform) {
             dialect = new VoltDbSymmetricDialect(parameterService, platform);
+        } else if (platform instanceof ClickHouseDatabasePlatform) {
+            dialect = new ClickHouseSymmetricDialect( parameterService, platform );
         } else {
             dialect = new GenericSymmetricDialect(parameterService, platform);
         }

@@ -24,33 +24,28 @@ import java.io.StringReader;
 import java.lang.reflect.Method;
 import java.sql.SQLException;
 import java.sql.Types;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.ArrayUtils;
 import org.apache.commons.lang.StringUtils;
+import org.joda.time.LocalDateTime;
+import org.joda.time.format.DateTimeFormat;
+import org.joda.time.format.DateTimeFormatter;
+import org.jumpmind.analytics.AnswerData;
+import org.jumpmind.analytics.AnswerTypeMapping;
+import org.jumpmind.analytics.QuestionData;
+import org.jumpmind.analytics.ResponseData;
 import org.jumpmind.db.io.DatabaseXmlUtil;
 import org.jumpmind.db.model.Column;
 import org.jumpmind.db.model.Database;
 import org.jumpmind.db.model.Table;
 import org.jumpmind.db.platform.DatabaseInfo;
+import org.jumpmind.db.platform.DatabaseNamesConstants;
 import org.jumpmind.db.platform.IDatabasePlatform;
-import org.jumpmind.db.sql.DmlStatement;
+import org.jumpmind.db.sql.*;
 import org.jumpmind.db.sql.DmlStatement.DmlType;
-import org.jumpmind.db.sql.ISqlRowMapper;
-import org.jumpmind.db.sql.ISqlTemplate;
-import org.jumpmind.db.sql.ISqlTransaction;
-import org.jumpmind.db.sql.Row;
-import org.jumpmind.db.sql.SqlException;
-import org.jumpmind.db.sql.SqlScriptReader;
-import org.jumpmind.symmetric.io.data.Batch;
-import org.jumpmind.symmetric.io.data.CsvData;
-import org.jumpmind.symmetric.io.data.CsvUtils;
-import org.jumpmind.symmetric.io.data.DataContext;
+import org.jumpmind.symmetric.io.data.*;
 import org.jumpmind.symmetric.io.data.writer.Conflict.DetectConflict;
 import org.jumpmind.symmetric.io.data.writer.Conflict.DetectExpressionKey;
 import org.jumpmind.util.CollectionUtils;
@@ -61,7 +56,28 @@ import org.slf4j.LoggerFactory;
 public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
     
     protected final static Logger log = LoggerFactory.getLogger(DefaultDatabaseWriter.class);
-    
+
+    private static final String PARTITION_DATE = "partition_date";
+    private static final String RESPONSE_ID = "response_id";
+    private static final String ID = "id";
+    private static final String FORM_ID = "form_id";
+    private static final String ANSWER_GROUP = "answer_group";
+    private static final String DELETED = "deleted";
+    private static final String LAST_SUBMITTED = "last_submitted";
+    private static final String USER_ID = "user_id";
+    private static final String RESPONSE_LABEL = "response_label";
+    private static final String RESPONSE_NUMBER = "response_number";
+    private static final String PASSWORD_EMAIL = "password_email";
+    private static final String CREATED = "created";
+    private static final DateTimeFormatter FORMAT = DateTimeFormat.forPattern( "yyyy-MM-dd HH:mm:ss" );
+
+    private static final String SURVEY_TABLE = "tblSurvey";
+    private static final String VALUE_TYPE_TABLE = "tblValueType";
+    private static final String QUESTION_TABLE = "tblQuestion";
+    private static final String ANSWER_TABLE = "tblAnswer";
+    private static final String RESPONDENT_TABLE = "tblRespondent";
+    private static final String RESPONDENT_LABEL_TABLE = "tblResponseLabel";
+
     public static final String CUR_DATA = "DatabaseWriter.CurData";
 
     protected IDatabasePlatform platform;
@@ -157,18 +173,57 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
     }
 
     @Override
+    public void write( CsvData data ) {
+        if ( targetTable == null ) {
+            targetTable = sourceTable.copy();
+        }
+        super.write( data );
+    }
+
+    @Override
     protected LoadStatus insert(CsvData data) {
         try {
             statistics.get(batch).startTimer(DataWriterStatisticConstants.DATABASEMILLIS);
-            if (requireNewStatement(DmlType.INSERT, data, false, true, null)) {
-                this.lastUseConflictDetection = true;
-                this.currentDmlStatement = platform.createDmlStatement(DmlType.INSERT, targetTable, writerSettings.getTextColumnExpression());
-                if (log.isDebugEnabled()) {
-                    log.debug("Preparing dml: " + this.currentDmlStatement.getSql());
-                }
-                transaction.prepare(this.currentDmlStatement.getSql());
-            }
+
             try {
+                if ( targetTable == null ) {
+                    targetTable = sourceTable.copy();
+                    String tableName = targetTable.getName();
+                    String[] values = getRowData( data, CsvData.ROW_DATA );
+                    if ( tableName.equalsIgnoreCase( SURVEY_TABLE ) ) {
+                        processSurveyTable( values );
+                    }
+                    if ( tableName.equalsIgnoreCase( VALUE_TYPE_TABLE ) ) {
+                        processValueTypeTable( values, 0 );
+                    }
+                    if ( tableName.equalsIgnoreCase( QUESTION_TABLE ) ) {
+                        processQuestionTable( values, 0 );
+                    }
+                    if ( tableName.equalsIgnoreCase( ANSWER_TABLE ) ) {
+                        processAnswerTable( values, "ADD" );
+                    }
+                    if ( tableName.equalsIgnoreCase( RESPONDENT_TABLE ) ) {
+                        insertRespondentTable( values );
+                    }
+                    if ( tableName.equalsIgnoreCase( RESPONDENT_LABEL_TABLE ) ) {
+                        processResponseLabelTable( values, data );
+                    }
+                    return LoadStatus.SUCCESS;
+                }
+
+                if ( requireNewStatement( DmlType.INSERT, data, false, true, null ) ) {
+                    this.lastUseConflictDetection = true;
+                    this.currentDmlStatement = platform.createDmlStatement(
+                            DmlType.INSERT,
+                            targetTable,
+                            writerSettings.getTextColumnExpression()
+                    );
+                    if ( log.isDebugEnabled() ) {
+                        log.debug( "Preparing dml: " + this.currentDmlStatement.getSql() );
+                    }
+                    transaction.prepare( this.currentDmlStatement.getSql() );
+                }
+
                 Conflict conflict = writerSettings.pickConflict(this.targetTable, batch);
                 String[] values = (String[]) ArrayUtils.addAll(getRowData(data, CsvData.ROW_DATA),
                         this.currentDmlStatement.getLookupKeyData(getLookupDataMap(data, conflict)));
@@ -202,9 +257,393 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
         }
     }
 
+    private void processSurveyTable( String[] values ) {
+        String formId = "";
+        for ( int i = 0; i < targetTable.getColumnCount(); i++ ) {
+            Column column = targetTable.getColumn( i );
+            if ( column != null ) {
+                if ( column.getName().equalsIgnoreCase( "SurveyID" ) ) {
+                    formId = values[i];
+                    break;
+                }
+            }
+        }
+
+        new SqlScript(
+                createTableQuery( "form_" + formId, getColumnNames() ),
+                platform.getSqlTemplate(), false, false, false, ";", null
+        ).execute();
+        new SqlScript(
+                createDistributedTableQuery( "form_" + formId, formId ),
+                platform.getSqlTemplate(), false, false, false, ";", null
+        ).execute();
+    }
+
+    private void processValueTypeTable( String[] values, int deleted ) {
+        AnswerData answerData = new AnswerData();
+        for ( int i = 0; i < targetTable.getColumnCount(); i++ ) {
+            Column column = targetTable.getColumn( i );
+            if ( column != null ) {
+                String columnName = column.getName();
+                if ( columnName.equalsIgnoreCase( "valueTypeId" ) ) {
+                    answerData.setValueTypeId( Long.parseLong( values[i] ) );
+                }
+                if ( columnName.equalsIgnoreCase( "valType" ) ) {
+                    answerData.setValueType( Integer.parseInt( values[i] ) );
+                }
+                if ( columnName.equalsIgnoreCase( "pattern" ) ) {
+                    answerData.setPattern( values[i] );
+                }
+                if ( columnName.equalsIgnoreCase( "decimals" ) ) {
+                    answerData.setDecimals( Integer.parseInt( values[i] ) );
+                }
+                if ( columnName.equalsIgnoreCase( "format" ) ) {
+                    answerData.setFormat( values[i] );
+                }
+            }
+        }
+        new SqlScript(
+                String.format(
+                        "INSERT INTO answer_data(value_type_id, value_type, pattern, " +
+                                "decimals, format, deleted) VALUES (%d, %d, '%s', %d, '%s', %d);",
+                        answerData.getValueTypeId(),
+                        answerData.getValueType(),
+                        answerData.getPattern(),
+                        answerData.getDecimals(),
+                        answerData.getFormat(),
+                        deleted
+                ),
+                platform.getSqlTemplate(), false, false, false, ";", null
+        ).execute();
+    }
+
+    private void processQuestionTable( String[] values, int deleted ) {
+        QuestionData questionData = new QuestionData();
+        for ( int i = 0; i < targetTable.getColumnCount(); i++ ) {
+            Column column = targetTable.getColumn( i );
+            if ( column != null ) {
+                String columnName = column.getName();
+                if ( columnName.equalsIgnoreCase( "SurveyID" ) ) {
+                    questionData.setFormId( Long.parseLong( values[i] ) );
+                }
+                if ( columnName.equalsIgnoreCase( "QuestionID" ) ) {
+                    questionData.setId( Long.parseLong( values[i] ) );
+                }
+                if ( columnName.equalsIgnoreCase( "QuestionType" ) ) {
+                    questionData.setType( Integer.parseInt( values[i] ) );
+                }
+                if ( columnName.equalsIgnoreCase( "questionSubType" ) ) {
+                    questionData.setSubType( Integer.parseInt( values[i] ) );
+                }
+                if ( columnName.equalsIgnoreCase( "TotalColumns" ) ) {
+                    questionData.setTotalColumns( Integer.parseInt( values[i] ) );
+                }
+                if ( ( columnName.equalsIgnoreCase( "minimumValue" ) ||
+                        columnName.equalsIgnoreCase( "maximumValue" ) ) &&
+                        StringUtils.isNotEmpty( values[i] ) ) {
+                    questionData.setNumeric( true );
+                }
+            }
+        }
+
+        new SqlScript(
+                String.format(
+                        "INSERT INTO question_data(id, form_id, type, sub_type, numeric, " +
+                                "total_columns, deleted) VALUES (%d, %d, %d, %d, %d, %d, %d);",
+                        questionData.getId(),
+                        questionData.getFormId(),
+                        questionData.getType(),
+                        questionData.getSubType(),
+                        questionData.isNumeric() ? 1 : 0,
+                        questionData.getTotalColumns(),
+                        deleted
+                ),
+                platform.getSqlTemplate(), false, false, false, ";", null
+        ).execute();
+    }
+
+    private void processAnswerTable( String[] values, String action ) {
+        String questionId = "";
+        String answerId = "";
+        Integer answerType = 0;
+        String valueTypeId = "";
+        for ( int i = 0; i < targetTable.getColumnCount(); i++ ) {
+            Column column = targetTable.getColumn( i );
+            if ( column != null ) {
+                String columnName = column.getName().toLowerCase();
+                if ( columnName.equalsIgnoreCase( "QuestionID" ) ) {
+                    questionId = values[i];
+                }
+                if ( columnName.equalsIgnoreCase( "AnswerID" ) ) {
+                    answerId = values[i];
+                }
+                if ( columnName.equalsIgnoreCase( "AnswerType" ) ) {
+                    answerType = Integer.parseInt( values[i] );
+                }
+                if ( columnName.equalsIgnoreCase( "ValueTypeId" ) ) {
+                    valueTypeId = values[i];
+                }
+            }
+        }
+        QuestionData questionData = platform.getSqlTemplate().query(
+                "SELECT * FROM question_data FINAL WHERE id = " + questionId,
+                row -> {
+                    QuestionData question = new QuestionData();
+                    question.setFormId( row.getLong( "form_id" ) );
+                    question.setType( row.getInt( "type" ) );
+                    question.setSubType( row.getInt( "sub_type" ) );
+                    question.setNumeric( row.getBoolean( "numeric" ) );
+                    question.setTotalColumns( row.getInt( "total_columns" ) );
+                    return question;
+                }
+        ).get( 0 );
+        List<AnswerData> answerData = new ArrayList<>();
+        if ( valueTypeId != null ) {
+            answerData.addAll( platform.getSqlTemplate().query(
+                    "SELECT * FROM answer_data FINAL WHERE value_type_id = " + valueTypeId,
+                    row -> {
+                        AnswerData answer = new AnswerData();
+                        answer.setValueType( row.getInt( "value_type" ) );
+                        answer.setDecimals( row.getInt( "decimals" ) );
+                        return answer;
+                    }
+            ) );
+        }
+
+        StringBuilder query = new StringBuilder();
+        query.append( "ALTER TABLE form_%s " )
+             .append( action )
+             .append( " COLUMN " );
+
+        if ( !action.equals( "DROP " ) ) {
+            query.append( "a_" )
+                 .append( answerId )
+                 .append( " " )
+                 .append( AnswerTypeMapping.getStoreType(
+                         questionData,
+                         answerType,
+                         answerData.isEmpty()
+                         ? null
+                         : answerData.get( 0 )
+                 ) );
+        }
+        new SqlScript(
+                String.format( query.toString(), questionData.getFormId() + "_local" ),
+                platform.getSqlTemplate(), false, false, false, ";", null
+        ).execute();
+        new SqlScript(
+                String.format( query.toString(), questionData.getFormId() ),
+                platform.getSqlTemplate(), false, false, false, ";", null
+        ).execute();
+    }
+
+    private void insertRespondentTable( String[] values ) {
+        ResponseData responseData = getResponseDataFromRespondent(values);
+
+        new SqlScript(
+                String.format(
+                        "INSERT INTO form_%d (%s, %s, %s, %s) VALUES (%d, '%s', '%s', '%s');",
+                        responseData.getFormId(),
+                        RESPONSE_ID,
+                        CREATED,
+                        LAST_SUBMITTED,
+                        PASSWORD_EMAIL,
+                        responseData.getId(),
+                        responseData.getCreated().toString( FORMAT ),
+                        responseData.getLastSubmitted().toString( FORMAT ),
+                        responseData.getPasswordEmail()
+                ),
+                platform.getSqlTemplate(), true, true, true, ";", null
+        ).execute();
+        new SqlScript(
+                String.format(
+                        "INSERT INTO response_data (%s, %s, %s) VALUES (%d, %d, %d);",
+                        ID,
+                        FORM_ID,
+                        ANSWER_GROUP,
+                        responseData.getId(),
+                        responseData.getFormId(),
+                        responseData.getAnswerGroup()
+                ),
+                platform.getSqlTemplate(), true, true, true, ";", null
+        ).execute();
+    }
+
+    private void updateRespondentTable( String[] values, CsvData data, int deleted ) {
+        ResponseData responseData = getResponseDataFromRespondent( values );
+
+        Map<String, Object> result = getFormData( responseData.getFormId(), responseData.getId() );
+        result.put( RESPONSE_ID, responseData.getId() );
+        result.put( CREATED, responseData.getCreated() );
+        result.put( LAST_SUBMITTED, responseData.getLastSubmitted() );
+        result.put( PASSWORD_EMAIL, responseData.getPasswordEmail() );
+        insertAllDataToForm( responseData.getFormId(), data, result );
+
+        new SqlScript(
+                String.format(
+                        "INSERT INTO response_data (%s, %s, %s, %s) VALUES (%d, %d, %d, %d);",
+                        ID,
+                        FORM_ID,
+                        ANSWER_GROUP,
+                        DELETED,
+                        responseData.getId(),
+                        responseData.getFormId(),
+                        responseData.getAnswerGroup(),
+                        deleted
+                ),
+                platform.getSqlTemplate(), true, true, true, ";", null
+        ).execute();
+    }
+
+    private ResponseData getResponseDataFromRespondent( String[] values ) {
+        ResponseData responseData = new ResponseData();
+        for ( int i = 0; i < targetTable.getColumnCount(); i++ ) {
+            Column column = targetTable.getColumn( i );
+            if ( column != null ) {
+                String columnName = column.getName().toLowerCase();
+                if ( columnName.equalsIgnoreCase( "SurveyId" ) ) {
+                    responseData.setFormId( Long.parseLong( values[i] ) );
+                }
+                if ( columnName.equalsIgnoreCase( "RespondentID" ) ) {
+                    responseData.setId( Long.parseLong( values[i] ) );
+                }
+                if ( columnName.equalsIgnoreCase( "dateTimeFirstSubmit" ) ) {
+                    responseData.setCreated( LocalDateTime.parse( values[i], FORMAT ) );
+                }
+                if ( columnName.equalsIgnoreCase( "DateTimeSubmit" ) ) {
+                    responseData.setLastSubmitted( LocalDateTime.parse( values[i], FORMAT ) );
+                }
+                if ( columnName.equalsIgnoreCase( "email" ) ) {
+                    responseData.setPasswordEmail( values[i] );
+                }
+            }
+        }
+        return responseData;
+    }
+
+    private void processResponseLabelTable( String[] values, CsvData data ) {
+        ResponseData responseData = new ResponseData();
+        for ( int i = 0; i < targetTable.getColumnCount(); i++ ) {
+            Column column = targetTable.getColumn( i );
+            if ( column != null ) {
+                String columnName = column.getName().toLowerCase();
+                if ( columnName.equalsIgnoreCase( "respondentID" ) ) {
+                    responseData.setId( Long.parseLong( values[i] ) );
+                }
+                if ( columnName.equalsIgnoreCase( "title" ) ) {
+                    responseData.setLabel( values[i] );
+                }
+            }
+        }
+
+        platform.getSqlTemplate().query(
+                "SELECT * FROM response_data FINAL WHERE id = " + responseData.getId(),
+                row -> {
+                    responseData.setFormId( row.getLong( FORM_ID ) );
+                    return null;
+                }
+        );
+
+        Map<String, Object> result = getFormData( responseData.getFormId(), responseData.getId() );
+        result.put( RESPONSE_LABEL, responseData.getLabel() );
+
+        this.currentDmlStatement = platform.createDmlStatement(
+                DmlType.INSERT,
+                platform.readTableFromDatabase( "", platform.getDefaultSchema(), "form_" + responseData.getFormId() ),
+                writerSettings.getTextColumnExpression()
+        );
+
+        transaction.prepare( this.currentDmlStatement.getSql() );
+        execute( data, result.values().stream().map( Object::toString ).toArray( String[]::new ) );
+    }
+
+    private Map<String, Object> getFormData( long formId, long responseId ) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        platform.getSqlTemplate().query(
+                String.format(
+                        "SELECT * FROM form_%d FINAL WHERE %s = %d",
+                        formId,
+                        RESPONSE_ID,
+                        responseId
+                ),
+                row -> {
+                    for ( String key : row.keySet().toArray( new String[0] ) ) {
+                        result.put( key, row.get( key ) );
+                    }
+                    return null;
+                }
+        );
+        return result;
+    }
+
+    private void insertAllDataToForm( long formId, CsvData data, Map<String, Object> result ) {
+        this.currentDmlStatement = platform.createDmlStatement(
+                DmlType.INSERT,
+                platform.readTableFromDatabase( "", platform.getDefaultSchema(), "form_" + formId ),
+                writerSettings.getTextColumnExpression()
+        );
+
+        transaction.prepare( this.currentDmlStatement.getSql() );
+        execute( data, result.values().stream().map( Object::toString ).toArray( String[]::new ) );
+    }
+
+    private String createTableQuery( String tableName, List<String> columns ) {
+        return String.format(
+                "CREATE TABLE IF NOT EXISTS %s_local (%s) " +
+                        " ENGINE = ReplacingMergeTree(%s, %s, 8192);",
+                tableName,
+                StringUtils.join( columns, ", " ),
+                PARTITION_DATE,
+                RESPONSE_ID
+        );
+    }
+
+    private String createDistributedTableQuery( String tableName, String id ) {
+        return String.format(
+                "CREATE TABLE IF NOT EXISTS %s AS %s_local" +
+                        " ENGINE = Distributed(test_cluster, analytics, %s_local, %s);",
+                tableName,
+                tableName,
+                tableName,
+                id
+        );
+    }
+
+    private List<String> getColumnNames() {
+        List<String> columns = new ArrayList<>();
+        columns.add( String.format( "%s Int64", RESPONSE_ID ) );
+        columns.add( String.format( "%s DateTime", CREATED ) );
+        columns.add( String.format( "%s DateTime", LAST_SUBMITTED ) );
+        columns.add( String.format( "%s String", PASSWORD_EMAIL ) );
+        columns.add( String.format( "%s String", RESPONSE_LABEL ) );
+        columns.add( String.format( "%s Int64", RESPONSE_NUMBER ) );
+        columns.add( String.format( "%s Int64", USER_ID ) );
+        columns.add( String.format( "%s UInt8", DELETED ) );
+        columns.add( String.format( "%s Date", PARTITION_DATE ) );
+        return columns;
+    }
+
     @Override
     protected LoadStatus delete(CsvData data, boolean useConflictDetection) {
         try {
+            if ( targetTable == null ) {
+                targetTable = sourceTable.copy();
+                String tableName = targetTable.getName();
+                String[] values = getRowData( data, CsvData.ROW_DATA );
+                if ( tableName.equalsIgnoreCase( VALUE_TYPE_TABLE ) ) {
+                    processValueTypeTable( values, 1 );
+                }
+                if ( tableName.equalsIgnoreCase( QUESTION_TABLE ) ) {
+                    processQuestionTable( values, 1 );
+                }
+                if ( tableName.equalsIgnoreCase( ANSWER_TABLE ) ) {
+                    processAnswerTable( values, "DROP" );
+                }
+                if ( tableName.equalsIgnoreCase( RESPONDENT_TABLE ) ) {
+                    updateRespondentTable( values, data, 1 );
+                }
+                return LoadStatus.SUCCESS;
+            }
             statistics.get(batch).startTimer(DataWriterStatisticConstants.DATABASEMILLIS);
             Conflict conflict = writerSettings.pickConflict(this.targetTable, batch);
             Map<String, String> lookupDataMap = null;
@@ -252,6 +691,12 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
                     lookupKeys = targetTable.getColumnsAsList();
                 }
 
+                /*List<Column> changedColumnsList = new ArrayList<Column>();
+                if (platform.getName().equals( DatabaseNamesConstants.CLICKHOUSE )) {
+                    lookupKeys = targetTable.getColumnsAsList();
+                    changedColumnsList = targetTable.getColumnsAsList();
+                }*/
+
                 int lookupKeyCountBeforeColumnRemoval = lookupKeys.size();
 
                 Iterator<Column> it = lookupKeys.iterator();
@@ -282,6 +727,16 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
                             && lookupDataMap.get(column.getName()) == null;
                 }
 
+                /*this.currentDmlStatement = platform.createDmlStatement(
+                        DmlType.DELETE,
+                        targetTable.getCatalog(),
+                        targetTable.getSchema(),
+                        targetTable.getName(),
+                        lookupKeys.toArray( new Column[lookupKeys.size()] ),
+                        changedColumnsList.toArray(new Column[changedColumnsList.size()]),
+                        nullKeyValues,
+                        writerSettings.getTextColumnExpression()
+                );*/
                 this.currentDmlStatement = platform.createDmlStatement(DmlType.DELETE,
                         targetTable.getCatalog(), targetTable.getSchema(), targetTable.getName(),
                         lookupKeys.toArray(new Column[lookupKeys.size()]), null, nullKeyValues, writerSettings.getTextColumnExpression());
@@ -315,12 +770,32 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
         } finally {
             statistics.get(batch).stopTimer(DataWriterStatisticConstants.DATABASEMILLIS);
         }
-
     }
 
     @Override
     protected LoadStatus update(CsvData data, boolean applyChangesOnly, boolean useConflictDetection) {
         try {
+            if ( targetTable == null ) {
+                targetTable = sourceTable.copy();
+                String tableName = targetTable.getName();
+                String[] values = getRowData( data, CsvData.ROW_DATA );
+                if ( tableName.equalsIgnoreCase( VALUE_TYPE_TABLE ) ) {
+                    processValueTypeTable( values, 0 );
+                }
+                if ( tableName.equalsIgnoreCase( QUESTION_TABLE ) ) {
+                    processQuestionTable( values, 0 );
+                }
+                if ( tableName.equalsIgnoreCase( ANSWER_TABLE ) ) {
+                    processAnswerTable( values, "MODIFY" );
+                }
+                if ( tableName.equalsIgnoreCase( RESPONDENT_TABLE ) ) {
+                    updateRespondentTable( values, data, 0 );
+                }
+                if ( tableName.equalsIgnoreCase( RESPONDENT_LABEL_TABLE ) ) {
+                    processResponseLabelTable( values, data );
+                }
+                return LoadStatus.SUCCESS;
+            }
             statistics.get(batch).startTimer(DataWriterStatisticConstants.DATABASEMILLIS);
             String[] rowData = getRowData(data, CsvData.ROW_DATA);
             String[] oldData = getRowData(data, CsvData.OLD_DATA);
@@ -400,6 +875,12 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
                         lookupKeys = targetTable.getColumnsAsList();
                     }
 
+                    if (platform.getName().equals( DatabaseNamesConstants.CLICKHOUSE )) {
+                        lookupKeys = targetTable.getColumnsAsList();
+                        changedColumnsList.clear();
+                        changedColumnsList.addAll( targetTable.getColumnsAsList() );
+                    }
+
                     int lookupKeyCountBeforeColumnRemoval = lookupKeys.size();
                     
                     Iterator<Column> it = lookupKeys.iterator();
@@ -450,6 +931,10 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
                 rowData = (String[]) changedColumnValueList
                         .toArray(new String[changedColumnValueList.size()]);
                 lookupDataMap = lookupDataMap == null ? getLookupDataMap(data, conflict) : lookupDataMap;
+                if (platform.getName().equals( DatabaseNamesConstants.CLICKHOUSE )) {
+                    rowData = getRowData(data, CsvData.ROW_DATA);
+                    lookupDataMap = null;
+                }
                 String[] values = (String[]) ArrayUtils.addAll(rowData,
                         this.currentDmlStatement.getLookupKeyData(lookupDataMap));
 
@@ -457,7 +942,8 @@ public class DefaultDatabaseWriter extends AbstractDatabaseWriter {
                     long count = execute(data, values);
                     statistics.get(batch)
                             .increment(DataWriterStatisticConstants.UPDATECOUNT, count);
-                    if (count > 0) {
+                    if ( count > 0 || platform.getName()
+                                              .equals( DatabaseNamesConstants.CLICKHOUSE ) ) {
                         return LoadStatus.SUCCESS;
                     } else {
                         context.put(CUR_DATA,getCurData(transaction));

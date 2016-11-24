@@ -486,7 +486,7 @@ public abstract class AbstractDdlBuilder implements IDdlBuilder {
                 RemoveColumnChange.class, AddColumnChange.class, ColumnAutoIncrementChange.class,
                 ColumnDefaultValueChange.class, ColumnRequiredChange.class,
                 ColumnDataTypeChange.class, ColumnSizeChange.class, CopyColumnValueChange.class });
-
+        log.error( "Changes:" + changes.toString() );
         processTableStructureChanges(currentModel, desiredModel,
                 CollectionUtils.select(changes, predicate), ddl);
 
