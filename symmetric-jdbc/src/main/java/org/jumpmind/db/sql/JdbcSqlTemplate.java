@@ -64,7 +64,7 @@ import org.springframework.jdbc.support.lob.LobHandler;
 
 public class JdbcSqlTemplate extends AbstractSqlTemplate implements ISqlTemplate {
 
-    static final Logger log = LoggerFactory.getLogger(JdbcSqlTemplate.class);
+    protected static final Logger log = LoggerFactory.getLogger(JdbcSqlTemplate.class);
 
     protected DataSource dataSource;
 
@@ -609,9 +609,13 @@ public class JdbcSqlTemplate extends AbstractSqlTemplate implements ISqlTemplate
                 obj = rs.getDate(index);
             }
         } else if (obj instanceof java.sql.Date) {
-            String metaDataClassName = metaData.getColumnClassName(index);
-            if ("java.sql.Timestamp".equals(metaDataClassName)) {
-                obj = rs.getTimestamp(index);
+            try {
+                String metaDataClassName = metaData.getColumnClassName( index );
+                if ("java.sql.Timestamp".equals(metaDataClassName)) {
+                    obj = rs.getTimestamp(index);
+                }
+            } catch ( UnsupportedOperationException e ) {
+                obj = rs.getDate( index );
             }
         } else if (obj instanceof Timestamp) {
             String typeName = metaData.getColumnTypeName(index);

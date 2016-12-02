@@ -82,6 +82,7 @@ project(':symmetric-util') {
         compile "commons-codec:commons-codec:$commonsCodecVersion"
         compile "commons-collections:commons-collections:$commonsCollectionVersion"
         compile "bouncycastle:bcprov-jdk15:$bouncyCastleVersion"
+        compile "joda-time:joda-time:$jodaVersion"
         provided "org.codehaus.mojo:animal-sniffer-annotations:$animalSnifferVersion"
     }
 }

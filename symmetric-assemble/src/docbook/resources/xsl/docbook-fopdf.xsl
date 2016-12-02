@@ -103,7 +103,7 @@
                             <fo:block font-family="Helvetica" font-size="12pt" padding-before="90mm">
                                 <xsl:text>Copyright &copyright; 2007 - 2013 </xsl:text>
                                 <xsl:for-each select="bookinfo/authorgroup/author">
-                                    <xsl:if test="position() > 1">
+                                    <xsl:if test="typeCode() > 1">
                                         <xsl:text>, </xsl:text>
                                     </xsl:if>
                                     <xsl:value-of select="firstname"/>
@@ -154,7 +154,7 @@
     <xsl:template name="footer.content">
         <xsl:param name="pageclass" select="''" />
         <xsl:param name="sequence" select="''" />
-        <xsl:param name="position" select="''" />
+        <xsl:param name="typeCode" select="''" />
         <xsl:param name="gentext-key" select="''" />
         <xsl:variable name="Version">
             <xsl:if test="//releaseinfo">
@@ -163,23 +163,23 @@
         </xsl:variable>
         <xsl:choose>
            <xsl:when test="$sequence='blank'">
-                <xsl:if test="$position = 'center'">
+                <xsl:if test="$typeCode = 'center'">
                     <xsl:value-of select="$Version" />
                 </xsl:if>
             </xsl:when>
             <!-- for double sided printing, print page numbers on alternating sides (of the page)-->
             <xsl:when test="$double.sided != 0">
                 <xsl:choose>
-                    <xsl:when test="$sequence = 'even' and $position='left'">
+                    <xsl:when test="$sequence = 'even' and $typeCode='left'">
                         <fo:page-number />
                     </xsl:when>
-                    <xsl:when test="$sequence = 'odd' and $position='right'">
+                    <xsl:when test="$sequence = 'odd' and $typeCode='right'">
                         <fo:page-number />
                     </xsl:when>
-                    <xsl:when test="$position='center'">
+                    <xsl:when test="$typeCode='center'">
                       <xsl:value-of select="$Version" />
                     </xsl:when>
-                    <xsl:when test="$sequence = 'first' and $position='right'">
+                    <xsl:when test="$sequence = 'first' and $typeCode='right'">
                         <fo:page-number />
                     </xsl:when>
                 </xsl:choose>
@@ -187,10 +187,10 @@
             <!-- for single sided printing, print all page numbers on the right (of the page)-->
             <xsl:when test="$double.sided = 0">
                 <xsl:choose>
-                    <xsl:when test="$position='center'">
+                    <xsl:when test="$typeCode='center'">
                         <xsl:value-of select="$Version" />
                     </xsl:when>
-                    <xsl:when test="$position='right'">
+                    <xsl:when test="$typeCode='right'">
                         <fo:page-number />
                     </xsl:when>
                 </xsl:choose>
